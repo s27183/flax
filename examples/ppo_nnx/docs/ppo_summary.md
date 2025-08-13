@@ -114,6 +114,8 @@ $$\hat{A}_t^{GAE} = \delta_t + \gamma\lambda \hat{A}_{t+1}^{GAE}$$
 
 **Practical GAE Algorithm:**
 ```python
+import jax.numpy as jnp
+
 def gae_advantages(rewards, terminal_masks, values, discount, gae_param):
     advantages = []
     gae = 0.0
@@ -227,3 +229,153 @@ where $r_t(\theta) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{old}}(a_t|s_t)}$ is
 - **Convergence**: Maintains policy gradient theorem guarantees while improving practical performance
 
 This progression represents a principled evolution driven by the fundamental bias-variance tradeoff, culminating in state-of-the-art advantage estimation used in modern PPO implementations.
+
+
+## Practical Tensor Structures for PPO Optimization
+
+This section ties the 8-step conceptual journey to the concrete tensors that flow into the PPO loss in this NNX-based implementation.
+
+- Collection across parallel environments and time:
+  - We run N parallel simulators for T steps to collect experience.
+  - Raw stacks (before flattening):
+    - states: shape (T, N, 84, 84, 4)
+    - actions: shape (T, N)  (discrete action indices)
+    - rewards: shape (T, N)
+    - values: shape (T+1, N)  (bootstrap one extra value for GAE)
+    - old_log_probs: shape (T, N)  (log π_{θ_old}(a_t|s_t))
+    - dones: shape (T, N)  (1.0 at terminal, else 0.0)
+
+- Per-environment GAE and returns (Step 6–7):
+  - For each environment i ∈ {1,…,N}, form terminal masks m_t = 1 − done_t.
+  - Call GAE with vectors of length T:
+    - rewards[:, i] → (T,)
+    - terminal_masks → (T,)
+    - values[:, i] → (T+1,)
+  - Compute for each env i:
+    - advantages[:, i]: shape (T,)
+    - returns[:, i] = advantages[:, i] + values[:-1, i]: shape (T,)
+
+- Flatten for optimization (Step 8):
+  - Define B = T × N (the total number of time-steps across all envs).
+  - The training trajectories passed to the optimizer are flattened to:
+    - states: (B, 84, 84, 4)
+    - actions: (B,)  int32
+    - old_log_probs: (B,)  float32
+    - returns: (B,)  float32
+    - advantages: (B,)  float32  (normalized inside the loss)
+
+- Minibatching for the loss:
+  - During an epoch, the flattened arrays are reshaped to (iterations, batch_size, …) and iterated.
+  - The loss function consumes one minibatch tuple:
+    - states: (batch_size, 84, 84, 4)
+    - actions: (batch_size,)
+    - old_log_probs: (batch_size,)
+    - returns: (batch_size,)
+    - advantages: (batch_size,)
+  - Model outputs for discrete actions:
+    - log_probs: (batch_size, num_actions)
+    - values: (batch_size, 1) → squeezed to (batch_size,)
+
+- What the PPO loss computes per minibatch (high level):
+  - Gather log_probs_act_taken = log_probs[j, actions[j]] per sample.
+  - Ratio r_t = exp(log_probs_act_taken − old_log_probs).
+  - Normalize advantages: (A − mean(A)) / (std(A) + 1e−8).
+  - Policy loss = −mean(min(r_t·A, clip(r_t, 1−ε, 1+ε)·A)).
+  - Value loss = mean((returns − values)^2).
+  - Entropy bonus = mean categorical entropy of the policy.
+
+Concrete examples
+
+1) Typical Atari-like setup (discrete actions)
+- Suppose T = 128 rollout steps and N = 8 environments, so B = 1024.
+- num_actions = 4 (example).
+- After flattening:
+  - states.shape = (1024, 84, 84, 4), dtype=float32
+  - actions.shape = (1024,), dtype=int32, e.g. [1, 0, 3, 2, 1, …]
+  - old_log_probs.shape = (1024,), e.g. [−0.69, −1.20, −0.92, …]
+  - returns.shape = (1024,), e.g. [0.43, 0.51, −0.12, …]
+  - advantages.shape = (1024,), normalized to mean≈0 and std≈1
+- A single minibatch with batch_size = 256 would have the same per-field shapes with 256 instead of 1024.
+
+2) Tiny end‑to‑end toy snapshot (T = 2, N = 3 ⇒ B = 6)
+- Flattened tensors passed into one loss evaluation (batch_size = 6):
+  - states: (6, 84, 84, 4)
+  - actions: [2, 0, 1, 3, 1, 0]
+  - old_log_probs: [−1.20, −0.69, −1.10, −1.39, −0.75, −1.25]
+  - returns: [0.97, 0.12, −0.05, 0.22, 0.08, −0.11]
+  - advantages (before normalization): [0.50, −0.10, 0.20, −0.30, 1.00, −1.30]
+  - advantages (after normalization inside loss): mean≈0, std≈1
+- The model produces:
+  - log_probs: (6, num_actions)
+  - values: (6, 1) → (6,)
+- The loss then computes r_t, applies clipping with ε, value MSE to returns, and adds an entropy bonus.
+
+Notes and edge cases
+- Terminal handling: masks prevent advantages from leaking across episode boundaries.
+- Dtypes: actions are integer indices; all other scalars are float32.
+- Continuous action variants would use actions shaped (B, action_dim) and log-prob scalars per sample, but this example uses discrete actions (categorical policy).
+
+
+
+## Visualizing the PPO Data Process
+
+A concise way to understand how tensors move through PPO is to visualize the pipeline from rollout collection to the optimized update.
+
+Flowchart overview
+
+```mermaid
+flowchart LR
+  subgraph Rollout[Collect T steps across N parallel envs]
+    S[States T*N*84*84*4]
+    S -->|model forward| LOGP[log_probs T*N*A]
+    S -->|model forward| VAL[values T+1*N]
+    LOGP --> A[Actions T*N]
+    A --> E[Env step]
+    E --> R[Rewards T*N]
+    E --> D[Dones T*N]
+  end
+
+  R --> GAE[GAE per env advantages T*N returns T*N]
+  D --> GAE
+  VAL --> GAE
+  GAE --> FLAT[Flatten B=T*N]
+  FLAT --> SHUF[Shuffle and Minibatches]
+  SHUF --> MODEL[Model forward]
+  MODEL --> LOSS[PPO Loss policy value entropy]
+  LOSS --> OPT[Optimizer Update]
+  OPT -->|repeat| Rollout
+```
+
+End-to-end interaction (sequence)
+
+```mermaid
+sequenceDiagram
+  participant Env1 as Env 1
+  participant EnvN as Env N
+  participant Col as Collector
+  participant GAE as GAE
+  participant DS as Dataset B=T*N
+  participant PPO as PPO Loss and Opt
+
+  Env1->>Col: state idx 0
+  EnvN->>Col: state idx N-1
+  Col->>Env1: action idx 0
+  Col->>EnvN: action idx N-1
+  Env1-->>Col: reward and done
+  EnvN-->>Col: reward and done
+  Note over Col: After T steps also have values t..t+T
+  Col->>GAE: rewards values dones per env
+  GAE-->>DS: advantages T,N and returns T,N
+  DS->>PPO: minibatches states actions old_log_probs returns advantages
+  PPO-->>Col: updated model params
+```
+
+What to plot while debugging or explaining the flow
+
+- Advantages histogram: expect mean≈0 after normalization, track std.
+- Policy ratio r_t histogram and clip fraction: how often clipping is active.
+- Value loss and returns vs. predicted values scatter: calibration of critic.
+- Entropy and action distribution: policy exploration over time.
+- Episode length/reward curves: aligns with data segmentation and masks.
+
+Tip: These can be logged with TensorBoard; this repo already writes scalar game_score. Adding histograms for advantages and ratios in the training loop can make these plots immediately available.
