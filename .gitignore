@@ -23,3 +23,10 @@ flaxlib_src/subprojects
 
 # custom
 /tmp-files
+
+# project
+.claude
+.junie
+.CLAUDE.md
+.idea
+.vscode
