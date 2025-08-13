@@ -7,8 +7,8 @@ This document provides a concise summary of the 8-step mathematical journey from
 **Core Objective:** Maximize expected return $J(\theta) = \mathbb{E}_{\tau \sim \pi_\theta}[R(\tau)]$
 
 **Key Assumptions:**
-- MDP Framework: States S, actions A, transitions P(s'|s,a), rewards R(s,a), discount γ
-- Differentiability: Policy π_θ(a|s) differentiable w.r.t. θ
+- MDP Framework: States $S$, actions $A$, transitions $P(s'|s,a)$, rewards $R(s,a)$, discount $\gamma$
+- Differentiability: Policy $\pi_\theta(a|s)$ differentiable w.r.t. $\theta$
 - Stationarity: Time-invariant dynamics and policy (momentarily during gradient computation)
 
 **Policy Gradient Theorem:**
@@ -39,7 +39,7 @@ $$\nabla_\theta J(\theta) = \mathbb{E}_{\tau \sim \pi_\theta}\left[\sum_{t=0}^{T
 
 ## Step 3: Emergence of Advantage Functions
 
-**Mathematical Derivation:** Using V^π(s) as baseline leads to advantage functions:
+**Mathematical Derivation:** Using $V^{\pi}(s)$ as baseline leads to advantage functions:
 $$A^{\pi}(s,a) = Q^{\pi}(s,a) - V^{\pi}(s)$$
 
 **Advantage-Based Policy Gradient:**
@@ -54,7 +54,7 @@ $$\mathbb{E}_{a \sim \pi_\theta}[A^{\pi}(s,a)] = \mathbb{E}_{a \sim \pi_\theta}[
 
 ## Step 4: Temporal Difference (TD) Estimation
 
-**Problem:** Direct computation of Q^π(s,a) and V^π(s) is intractable.
+**Problem:** Direct computation of $Q^{\pi}(s,a)$ and $V^{\pi}(s)$ is intractable.
 
 **TD Solution:** Use Bellman equation to estimate advantages:
 $$\delta_t^V = r_t + \gamma V(s_{t+1}) - V(s_t)$$
@@ -62,21 +62,21 @@ $$\delta_t^V = r_t + \gamma V(s_{t+1}) - V(s_t)$$
 **Key Assumptions:**
 - Bellman Validity: $V^{\pi}(s_t) = \mathbb{E}_{\pi}[r_t + \gamma V^{\pi}(s_{t+1}) | s_t]$
 - Markov Property: Future depends only on current state
-- Value Function Accuracy: V(s) ≈ V^π(s)
+- Value Function Accuracy: $V(s) \approx V^{\pi}(s)$
 
 **Bias-Variance Tradeoff:**
 - **Monte Carlo Direction**: Low bias, high variance (using actual rewards)
 - **TD Direction**: High bias, low variance (using bootstrapped estimates)
 
-**Advantage Approximation:** When V(s) = V^π(s), then $\delta_t^V = A^{\pi}(s_t, a_t)$
+**Advantage Approximation:** When $V(s) = V^{\pi}(s)$, then $\delta_t^V = A^{\pi}(s_t, a_t)$
 
 **Rationale:** TD errors provide computationally tractable advantage estimates, introducing the fundamental bias-variance tradeoff in advantage estimation.
 
 ## Step 5: The Bias-Variance Tradeoff in Advantage Estimation
 
 **Core Dilemma:**
-- **TD Error (λ=0)**: $\hat{A}_t = \delta_t$ → High bias, Low variance
-- **Monte Carlo (λ=1)**: $\hat{A}_t = \sum_{k=0}^{\infty} \gamma^k \delta_{t+k}$ → Low bias, High variance
+- **TD Error ($\lambda=0$)**: $\hat{A}_t = \delta_t$ → High bias, Low variance
+- **Monte Carlo ($\lambda=1$)**: $\hat{A}_t = \sum_{k=0}^{\infty} \gamma^k \delta_{t+k}$ → Low bias, High variance
 
 **High Variance Sources:**
 1. Stochastic rewards and environment transitions
@@ -84,7 +84,7 @@ $$\delta_t^V = r_t + \gamma V(s_{t+1}) - V(s_t)$$
 3. Finite sampling
 
 **Bias Sources:**
-1. Value function approximation: V_φ(s) ≠ V^π(s)
+1. Value function approximation: $V_\phi(s) \ne V^{\pi}(s)$
 2. Bootstrapping with estimated values
 3. Finite horizon truncation
 
@@ -98,17 +98,17 @@ $$\hat{A}_t^{GAE(\gamma,\lambda)} = \sum_{l=0}^{\infty} (\gamma\lambda)^l \delta
 **Recursive Implementation:**
 $$\hat{A}_t^{GAE} = \delta_t + \gamma\lambda \hat{A}_{t+1}^{GAE}$$
 
-**Bias-Variance Control Parameter λ:**
-- **λ = 0**: Pure TD → High bias, low variance
-- **λ = 1**: Pure MC → Low bias, high variance  
-- **λ ∈ (0,1)**: Optimal tradeoff → Exponentially weighted combination
+**Bias-Variance Control Parameter $\lambda$:**
+- **$\lambda = 0$**: Pure TD → High bias, low variance
+- **$\lambda = 1$**: Pure MC → Low bias, high variance  
+- **$\lambda \in (0,1)$**: Optimal tradeoff → Exponentially weighted combination
 
 **Key Assumptions:**
 1. Exponential decay: Future information becomes less reliable exponentially
-2. Geometric convergence: |γλ| < 1 ensures series convergence
+2. Geometric convergence: $|\gamma\lambda| < 1$ ensures series convergence
 3. Finite horizon: Practical truncation at episode boundaries
 
-**Rationale:** GAE provides principled interpolation between bias and variance, allowing practitioners to tune the λ parameter for optimal performance in specific domains.
+**Rationale:** GAE provides principled interpolation between bias and variance, allowing practitioners to tune the $\lambda$ parameter for optimal performance in specific domains.
 
 ## Step 7: State-of-the-Art Implementation in PPO
 
@@ -127,18 +127,18 @@ def gae_advantages(rewards, terminal_masks, values, discount, gae_param):
 **Why Reversed Loop is Essential:**
 - **Mathematical Dependency**: $\hat{A}_t^{GAE} = \delta_t + \gamma\lambda \hat{A}_{t+1}^{GAE}$ creates backward dependency chain
 - **Boundary Condition**: $\hat{A}_T^{GAE} = \delta_T$ (terminal condition)
-- **Computational Efficiency**: O(T) linear time complexity
+- **Computational Efficiency**: $O(T)$ linear time complexity
 - **Terminal State Handling**: Prevents advantage bleeding across episodes
 
 **Implementation Assumptions:**
-- Neural network approximation: V_φ(s) ≈ V^π(s)
+- Neural network approximation: $V_\phi(s) \approx V^{\pi}(s)$
 - Backward processing for efficient computation
-- Terminal state handling: V(s_terminal) = 0
+- Terminal state handling: $V(s_{\text{terminal}}) = 0$
 - Batch processing across parallel environments
 
 **Hyperparameter Sensitivity:**
-- γ ∈ [0.95, 0.99]: Discount factor
-- λ ∈ [0.9, 0.99]: GAE parameter
+- $\gamma \in [0.95, 0.99]$: Discount factor
+- $\lambda \in [0.9, 0.99]$: GAE parameter
 
 **Rationale:** Efficient implementation that maintains mathematical correctness while enabling practical deployment in modern RL systems.
 
@@ -176,7 +176,7 @@ where $r_t(\theta) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{old}}(a_t|s_t)}$ is
     
     **PPO's Innovation:**
     PPO bridges this gap through its two-phase process:
-    - **Experience Collection**: Use policy π_θ_old (on-policy data collection)
+    - **Experience Collection**: Use policy $\pi_{\theta_{\text{old}}}$ (on-policy data collection)
     - **Multiple Updates**: Reuse same data for several gradient steps (off-policy learning with importance sampling correction)
     
     **The Fundamental Tradeoff PPO Solves:**
@@ -215,15 +215,15 @@ where $r_t(\theta) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{old}}(a_t|s_t)}$ is
 ## Summary of Key Benefits
 
 1. **Variance Reduction**: GAE smooths noisy advantage estimates
-2. **Bias Control**: λ parameter enables fine-tuning of bias-variance tradeoff
+2. **Bias Control**: $\lambda$ parameter enables fine-tuning of bias-variance tradeoff
 3. **Sample Efficiency**: Better gradient estimates accelerate learning
 4. **Stability**: Reduced gradient noise and clipping improve training stability
 5. **Credit Assignment**: Multi-horizon consideration improves temporal credit assignment
 
 ## Theoretical Guarantees
 
-- **Unbiasedness**: When V(s) = V^π(s), GAE provides unbiased advantage estimates
-- **Consistency**: As λ → 1, GAE approaches Monte Carlo estimates
+- **Unbiasedness**: When $V(s) = V^{\pi}(s)$, GAE provides unbiased advantage estimates
+- **Consistency**: As $\lambda \to 1$, GAE approaches Monte Carlo estimates
 - **Convergence**: Maintains policy gradient theorem guarantees while improving practical performance
 
 This progression represents a principled evolution driven by the fundamental bias-variance tradeoff, culminating in state-of-the-art advantage estimation used in modern PPO implementations.
