@@ -328,7 +328,7 @@ Flowchart overview
   "theme": "base",
   "themeVariables": {
     "fontFamily": "Georgia, Times, serif",
-    "fontSize": "16px",
+    "fontSize": "14px",
     "textColor": "#222"
   }
 }}%%
@@ -361,7 +361,7 @@ End-to-end interaction (sequence)
   "theme": "base",
   "themeVariables": {
     "fontFamily": "Georgia, Times, serif",
-    "fontSize": "28px",
+    "fontSize": "16px",
     "textColor": "#222"
   }
 }}%%
