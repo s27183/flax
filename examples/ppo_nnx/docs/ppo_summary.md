@@ -324,7 +324,15 @@ A concise way to understand how tensors move through PPO is to visualize the pip
 Flowchart overview
 
 ```mermaid
-flowchart LR
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "Georgia, Times, serif",
+    "fontSize": "16px",
+    "textColor": "#222"
+  }
+}}%%
+flowchart TD
   subgraph Rollout[Collect T steps across N parallel envs]
     S[States T*N*84*84*4]
     S -->|model forward| LOGP[log_probs T*N*A]
@@ -349,6 +357,14 @@ flowchart LR
 End-to-end interaction (sequence)
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "Georgia, Times, serif",
+    "fontSize": "28px",
+    "textColor": "#222"
+  }
+}}%%
 sequenceDiagram
   participant Env1 as Env 1
   participant EnvN as Env N
