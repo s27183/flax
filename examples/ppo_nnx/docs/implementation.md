@@ -119,6 +119,14 @@ The execution flow of the NNX PPO implementation:
 ### PPO Execution Flow Diagram
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "Georgia, Times, serif",
+    "fontSize": "24px",
+    "textColor": "#222"
+  }
+}}%%
 flowchart TD
     A[Start: ppo_main.py] --> B[Parse Arguments & Load Config]
     B --> C[Create Atari Environment]
