@@ -359,3 +359,92 @@ Yes—RRL generalizes well beyond RL. Most modern AI workflows can be framed as:
 
 ### Bottom line
 RRL is a general engineering methodology: start from the tensors you can sustainably collect and optimize, select operators that are statistically sound under those constraints, choose architectures to satisfy operator interfaces, and let validators/diagnostics enforce assumptions. This pattern scales across supervised, self‑supervised, generative, recommender, RLHF, and multimodal systems with minimal extensions.
+
+
+
+---
+
+## Appendix: Where the RRL terms come from (contract, fields, operators, builders)
+
+### Why we use this vocabulary
+These labels make RL training loops explicit, swappable, and testable. They’re engineering-first names borrowed from software and numerical computing so you can reason from shapes → loss → implementation without hiding assumptions. They also generalize across RL families (PPO, DQN, IQL/DT) and beyond RL (SFT/DPO, contrastive, diffusion).
+
+### Origins and why they help
+- Contract (batch contract)
+  - Origin: API/data schema design, design-by-contract.
+  - Purpose: declare the minimal, sufficient tensors the optimizer will see (and their shapes/masks). Keeps compute, memory, and reproducibility front-and-center.
+- Fields (role‑tagged tensors)
+  - Origin: typed records/structs.
+  - Purpose: bind by meaning (e.g., `ref.logp`, `target.adv`) instead of tuple positions; reduces wiring bugs and eases ablations.
+- Operator (loss/estimator/regularizer)
+  - Origin: functional/numerical programming; TRFL/RLax expose RL objectives as operators.
+  - Purpose: a pure(ish) function consuming specific fields and producing a loss term and metrics (e.g., PPO surrogate, value MSE, entropy, KL).
+- Builder (signal construction)
+  - Origin: builder pattern and ML feature/target pipelines.
+  - Purpose: compute upstream signals operators need (GAE, TD targets, logp snapshots, RTG, uncertainty weights) from raw rollouts/data.
+- Aggregator (objective composer)
+  - Origin: standard DL loss composition.
+  - Purpose: sum weighted operator outputs; apply masks/weights; return total loss and per-term diagnostics.
+- Validator (capability checker)
+  - Origin: systems configuration validation.
+  - Purpose: ensure operators’ preconditions match the contract; fail fast or provide measured fallbacks and explicit caveats.
+
+### Glossary (engineer’s view)
+
+| Term | Comes from | In RRL it means |
+|---|---|---|
+| Contract | API/schema design | The role‑tagged batch your optimizer consumes (e.g., `obs`, `act`, `ref.logp`, `target.adv`, `mask.valid`). |
+| Field | Typed records | A named tensor with a role and shape, e.g., `target.value: [B]`. |
+| Operator | Numerical ops/TRFL/RLax | A loss/estimator that declares required fields and outputs a scalar term + metrics. |
+| Builder | Pipeline/builder pattern | Function that populates fields (e.g., add GAE advantages and returns). |
+| Aggregator | Loss composition | Composes operator terms into the total loss with masks and weights. |
+| Validator | Config validation | Checks capabilities and preconditions; suggests fallbacks when missing. |
+
+### How these map onto this PPO NNX repo
+- Contract/Fields
+  - Produced by collection + processing in `ppo_lib.process_experience(...)`:
+    - `states, actions, old_log_probs, returns, advantages` → this is the batch contract for PPO.
+- Builder
+  - `ppo_lib.gae_advantages(...)` computes $A_t$; `process_experience` constructs `returns = A_t + V(s_t)$ (where $V$ comes from rollout values).
+- Operators (sub-terms of the objective)
+  - Implemented inside `ppo_lib.loss_fn(...)`:
+    - PPO clipped policy surrogate (policy operator)
+    - Value MSE (critic operator)
+    - Entropy bonus (regularizer)
+- Aggregator
+  - `loss_fn` sums policy, value (weighted by `vf_coeff`), and entropy (weighted by `entropy_coeff`).
+- Validator
+  - Currently implicit (shape assertions, assumptions like `rewards.shape[0] + 1 == values.shape[0]` in `gae_advantages`). In RRL, this becomes explicit capability checks (e.g., `has_ref_logp`).
+
+### Minimal end‑to‑end sketch (RRL terms in code form)
+```python
+# 1) Contract/Fields produced by the collector + builders
+roll = collector.run(policy, T, N)  # obs, act, rew, done, values, logp_old
+adv, target_value = add_gae(
+    rew=roll.rew, done=roll.done, values=roll.values, gamma=0.99, lam=0.95)
+
+batch = {
+    "obs": roll.obs.reshape(B, *S),
+    "act": roll.act.reshape(B),
+    "ref.logp": roll.logp_old.reshape(B),
+    "target.adv": adv.reshape(B),
+    "target.value": target_value.reshape(B),
+    "mask.valid": (1.0 - roll.done.reshape(B)).astype(bool),
+}
+
+# 2) (Optional) validator checks operator requirements
+# validator.require(batch, fields={"obs","act","ref.logp","target.adv","mask.valid"})
+
+# 3) Operators consume fields; aggregator composes the objective
+L = (
+   L_pg_clip(model, batch)           # policy operator
+ + cfg.vf_coeff * L_value_mse(model, batch)   # critic operator
+ - cfg.entropy_coeff * L_entropy(model, batch) # regularizer
+)
+optimizer.step(L)
+```
+
+Notes:
+- All operators multiply by `mask.valid` internally to avoid gradients through invalid samples.
+- Advantage normalization (per-batch) is a numerical hygiene step often done inside the policy operator.
+- Missing fields should trigger validator guidance (e.g., no `ref.logp` → disable PG‑clip and suggest BC or snapshotting log‑probs during collection).
