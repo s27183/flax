@@ -150,3 +150,23 @@ def policy_action(model: ActorCritic, state):
 - [Original Linen Implementation](../ppo/)
 
 This implementation serves as a comprehensive example of migrating complex ML workloads from Flax Linen to NNX, demonstrating best practices and the benefits of the new API.
+
+---
+
+## RRL: Reversed RL for System Engineers
+
+For a compact, system‑engineering‑first abstraction (shapes → operators → loss), see:
+
+- examples/ppo_nnx/docs/rrl.md
+
+It includes a capability table, operator manifests, pseudocode, and two runnable configs to compare PPO with and without a value network:
+
+```bash
+python -m examples.ppo_nnx.ppo_main \
+  --config=examples/ppo_nnx/configs/crf_with_value.py \
+  --workdir=/tmp/ppo_crf_value
+
+python -m examples.ppo_nnx.ppo_main \
+  --config=examples/ppo_nnx/configs/crf_policy_only.py \
+  --workdir=/tmp/ppo_crf_policy_only
+```

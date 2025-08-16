@@ -395,3 +395,24 @@ What to plot while debugging or explaining the flow
 - Episode length/reward curves: aligns with data segmentation and masks.
 
 Tip: These can be logged with TensorBoard; this repo already writes scalar game_score. Adding histograms for advantages and ratios in the training loop can make these plots immediately available.
+
+
+---
+
+## See also: Reversed RL (RRL)
+
+For a compact, system‑engineering‑first abstraction starting from tensors and operators (with a capability table, operator manifests, pseudocode, and runnable configs to compare with/without a value network), see:
+
+- [rrl.md](./rrl.md)
+
+You can run the two comparison configs directly via:
+
+```bash
+python -m examples.ppo_nnx.ppo_main \
+  --config=examples/ppo_nnx/configs/crf_with_value.py \
+  --workdir=/tmp/ppo_crf_value
+
+python -m examples.ppo_nnx.ppo_main \
+  --config=examples/ppo_nnx/configs/crf_policy_only.py \
+  --workdir=/tmp/ppo_crf_policy_only
+```
