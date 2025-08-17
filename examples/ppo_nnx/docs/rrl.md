@@ -448,3 +448,119 @@ Notes:
 - All operators multiply by `mask.valid` internally to avoid gradients through invalid samples.
 - Advantage normalization (per-batch) is a numerical hygiene step often done inside the policy operator.
 - Missing fields should trigger validator guidance (e.g., no `ref.logp` → disable PG‑clip and suggest BC or snapshotting log‑probs during collection).
+
+
+
+### CT/FP view of RRL (engineer’s take)
+
+RRL’s “shapes → operators → objective” aligns with ideas from category theory and functional programming (FP). This mapping gives you composability, testability, and safety without overformalizing the pipeline.
+
+- Batch contract (role‑tagged tensors)
+  - CT/FP: an object (product type/record). Projections are fields; the contract is the type signature of the optimizer input.
+- Fields (e.g., `obs`, `act`, `ref.logp`, `target.adv`, `mask.valid`)
+  - CT/FP: components of a product; accessed/updated via lenses.
+- Builders (signal constructors like GAE, TD targets)
+  - CT/FP: endomorphisms on the Batch (Batch → Batch) or arrows Batch → Batch′; often live in Writer/State monads because they “add fields.”
+- Operators (loss/estimator/regularizer)
+  - CT/FP: morphisms/arrows that consume a Batch and produce (LossTerm × Metrics). With params/RNG, model them as Kleisli arrows (Reader for params, Random for RNG, State for optimizer if needed).
+- Aggregator (objective composer)
+  - CT/FP: monoid homomorphism—fold a set of loss terms (monoidal under +) into a scalar.
+- Validator (capability checker)
+  - CT/FP: Validation applicative/Either; accumulate precondition errors instead of failing at the first one.
+- Composition graph (of builders/operators)
+  - CT/FP: a DAG of arrows; often a monoidal category for parallel composition.
+- Masks/weights (`mask.valid`, `weight.sample`, etc.)
+  - CT/FP: semiring/monoid structure that gates contributions (e.g., masked sums).
+
+Practical, minimal snippets (FP‑flavored pseudocode):
+
+```python
+# 1) Validation applicative for capability checks
+class V:
+    def __init__(self, value=None, errors=None):
+        self.value, self.errors = value, (errors or [])
+    @staticmethod
+    def ok(x): return V(value=x)
+    @staticmethod
+    def err(msgs): return V(errors=list(msgs))
+    def map(self, f):
+        return self if self.errors else V.ok(f(self.value))
+    def bind(self, f):  # then/bind
+        return self.map(f)
+
+def require(batch, fields):
+    missing = [f for f in fields if f not in batch]
+    return V.err([f"missing field: {m}" for m in missing]) if missing else V.ok(batch)
+```
+
+```python
+# 2) Builder as a pure endomorphism on the batch (Batch -> Batch)
+def add_gae(batch, gamma: float, lam: float):
+    v = require(batch, ["rew", "done", "values"])  # values has T+1
+
+    def build(b):
+        rew, done, values = b["rew"], b["done"], b["values"]
+        T = rew.shape[0]
+        adv = jnp.zeros_like(rew)
+        gae = 0.0
+        for t in range(T - 1, -1, -1):
+            delta = rew[t] + gamma * (1 - done[t]) * values[t+1] - values[t]
+            gae = delta + gamma * lam * (1 - done[t]) * gae
+            adv = adv.at[t].set(gae)
+        target_value = adv + values[:-1]
+        return {**b, "target.adv": adv, "target.value": target_value}
+
+    return v.map(build)
+```
+
+```python
+# 3) Operator (PG‑clip) as an arrow with effects (Reader params, Random rng)
+def pg_clip(params, rng, batch, eps, ent_w=0.0, kl_w=0.0):
+    # requires: obs, act, ref.logp, target.adv, mask.valid
+    logp, entropy = policy_logp_and_entropy(params, batch["obs"], batch["act"])
+    r = jnp.exp(logp - batch["ref.logp"])  # importance ratio
+    A = batch["target.adv"]
+    A = (A - A.mean()) / (A.std() + 1e-8)  # numerical hygiene
+    mask = batch["mask.valid"].astype(jnp.float32)
+
+    pg = -jnp.minimum(r * A, jnp.clip(r, 1 - eps, 1 + eps) * A)
+    L_pg = jnp.mean(pg * mask)
+    L_ent = -ent_w * jnp.mean(entropy * mask)
+    L_kl = kl_w * jnp.mean((batch["ref.logp"] - logp) * mask)
+
+    loss = L_pg + L_ent + L_kl
+    metrics = {
+        "clip_frac": jnp.mean((jnp.abs(r - 1.0) > eps) * mask),
+        "entropy": jnp.mean(entropy * mask),
+    }
+    return loss, metrics
+```
+
+```python
+# 4) Aggregator: monoidal fold over operator terms
+# weighted_terms: list of tuples (weight, loss_term)
+def aggregate(weighted_terms):
+    return sum(w * L for (w, L) in weighted_terms)  # (+, 0) monoid
+```
+
+```python
+# 5) Lens‑like helpers for field updates (ergonomic but optional)
+def lens_get(batch, key):
+    return batch[key]
+
+def lens_set(batch, key, value):
+    return {**batch, key: value}
+
+# Example: normalize advantages via a lens
+A = lens_get(batch, "target.adv")
+A_hat = (A - A.mean()) / (A.std() + 1e-8)
+batch = lens_set(batch, "target.adv", A_hat)
+```
+
+Why this helps (without overformalizing):
+- Composability: builders/operators are just functions you can compose and swap; ablations are local changes.
+- Testability: pure, deterministic transformations are trivial to unit test.
+- Safety: validators make assumptions explicit and catch missing preconditions early.
+- Performance: purity and shape stability align with JIT/XLA; role‑tagged fields reduce wiring mistakes that cause recompiles.
+
+Caveat: Don’t overfit to the abstraction—practical constraints (padding, sharding, static shapes) sometimes require light impurity (e.g., in‑place buffers) for performance.
